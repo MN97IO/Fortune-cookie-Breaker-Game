@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>Fortune cookie Breaker Game</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      height: 100%;
+      width: 100%;
+      font-family: monospace;
+    }
+
+    #video-background {
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    #video-background iframe {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 177.77vh;
+      height: 100vh;
+    }
+
+    #game-container {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+    }
+
+    canvas {
+      margin-top: 10px;
+      border: 2px solid #555;
+      background-color: #ffffff;
+    }
+
+    h2 {
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 🎥 배경 영상 -->
+  <div id="video-background" style="display: none;">
+    <iframe
+      id="bombardino-iframe"
+      src=""
+      frameborder="0"
+      allow="autoplay; encrypted-media"
+      allowfullscreen
+    ></iframe>
+  </div>
+
+  <!-- 🎮 게임 UI -->
+  <div id="game-container">
+    <h2>Fortune cookie Breaker Game</h2>
+    <canvas id="gameCanvas" width="600" height="400"></canvas>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    let x = canvas.width / 2;
+    let y = canvas.height - 30;
+    let dx = 1.5;
+    let dy = -1.5;
+    const radius = 6;
+    const ACCEL = 0.002;
+    const MAX_SPEED = 3.5;
+
+    const paddleWidth = 80;
+    const paddleHeight = 10;
+    let paddleX = (canvas.width - paddleWidth) / 2;
+    let rightPressed = false;
+    let leftPressed = false;
+
+    const rowCount = 3;
+    const colCount = 6;
+    const brickPadding = 10;
+    const brickOffsetTop = 50;
+    const IMG_WIDTH = 64;
+    let imgRatio = 1;
+
+    let score = 0;
+    let lives = 3;
+    let inputBuffer = "";
+    let gameCleared = false;
+
+    const words = ["apple", "sky", "run", "java", "cool", "code", "fun", "key", "ball", "hit"];
+    const bricks = [];
+    const fallingWords = [];
+
+    const beforeImg = new Image();
+    beforeImg.src = "before.png";
+    const afterImg = new Image();
+    afterImg.src = "after.png";
+
+    const crunchSoundSrc = "crunch.mp3";
+    const shoutSoundSrc = "shout.mp3";
+    const yammySoundSrc = "yammy.mp3";
+
+    function playYammySound() {
+      new Audio(yammySoundSrc).play();
+    }
+    function playCrunchSound() {
+      new Audio(crunchSoundSrc).play();
+    }
+
+    function playShoutSound() {
+      new Audio(shoutSoundSrc).play();
+    }
+
+    function playBombardino() {
+      const videoDiv = document.getElementById("video-background");
+      const iframe = document.getElementById("bombardino-iframe");
+      iframe.src = "https://www.youtube.com/embed/bVPjPbrP8mY?autoplay=1&mute=0";
+      videoDiv.style.display = "block";
+
+      setTimeout(() => {
+        iframe.src = "";
+        videoDiv.style.display = "none";
+      }, 5000);
+    }
+
+    beforeImg.onload = () => {
+      imgRatio = beforeImg.height / beforeImg.width;
+      afterImg.onload = () => draw();
+    };
+
+    let specialBrick = { c: 0, r: 0 };
+    for (let c = 0; c < colCount; c++) {
+      bricks[c] = [];
+      for (let r = 0; r < rowCount; r++) {
+        bricks[c][r] = {
+          x: 0, y: 0,
+          broken: false,
+          visible: true,
+          brokenTime: 0,
+          word: words[Math.floor(Math.random() * words.length)],
+          status: 1
+        };
+      }
+    }
+
+    // 무작위 브릭 하나를 bombardino로 설정
+    specialBrick.c = Math.floor(Math.random() * colCount);
+    specialBrick.r = Math.floor(Math.random() * rowCount);
+    bricks[specialBrick.c][specialBrick.r].word = "bombardino crocodilo";
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight") rightPressed = true;
+      if (e.key === "ArrowLeft") leftPressed = true;
+      if (e.key.length === 1) inputBuffer += e.key;
+      if (e.key === "Backspace") inputBuffer = inputBuffer.slice(0, -1);
+      checkWordInput();
+    });
+
+    document.addEventListener("keyup", (e) => {
+      if (e.key === "ArrowRight") rightPressed = false;
+      if (e.key === "ArrowLeft") leftPressed = false;
+    });
+
+    function drawBricks() {
+      const brickHeight = IMG_WIDTH * imgRatio;
+      const totalWidth = colCount * IMG_WIDTH + (colCount - 1) * brickPadding;
+      const startX = (canvas.width - totalWidth) / 2;
+
+      for (let c = 0; c < colCount; c++) {
+        for (let r = 0; r < rowCount; r++) {
+          const b = bricks[c][r];
+          const brickX = startX + c * (IMG_WIDTH + brickPadding);
+          const brickY = brickOffsetTop + r * (brickHeight + brickPadding);
+          b.x = brickX;
+          b.y = brickY;
+
+          if (b.broken && b.visible && Date.now() - b.brokenTime >= 2000) {
+            b.visible = false;
+          }
+
+          if (!b.broken) {
+            ctx.drawImage(beforeImg, brickX, brickY, IMG_WIDTH, brickHeight);
+          }
+
+          if (b.broken && b.visible) {
+            ctx.drawImage(afterImg, brickX, brickY, IMG_WIDTH, brickHeight);
+            ctx.fillStyle = "#fff";
+            ctx.font = "12px monospace";
+            ctx.fillText(b.word, brickX + 10, brickY + 15);
+          }
+        }
+      }
+    }
+
+    function drawBall() {
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = "#0077cc";
+      ctx.fill();
+      ctx.closePath();
+    }
+
+    function drawPaddle() {
+      ctx.beginPath();
+      ctx.rect(paddleX, canvas.height - paddleHeight, paddleWidth, paddleHeight);
+      ctx.fillStyle = "#333";
+      ctx.fill();
+      ctx.closePath();
+    }
+
+    function drawFallingWords() {
+      ctx.font = "14px monospace";
+      for (const fw of fallingWords) {
+        // 속도 차이 적용
+        const speed = fw.word === "bombardino crocodilo" ? 0.5 * 1.75 : 0.5;
+        fw.y += speed;
+
+        // 색상 구분
+        ctx.fillStyle = fw.word === "bombardino crocodilo" ? "red" : "#000";
+        ctx.fillText(fw.word, fw.x, fw.y);
+
+        if (fw.y > canvas.height) {
+          fallingWords.splice(fallingWords.indexOf(fw), 1);
+          lives--;
+          playShoutSound();
+          if (lives === 0) {
+            setTimeout(() => {
+              alert("💀 게임 오버!");
+              location.reload();
+            }, 100);
+          }
+        }
+      }
+    }
+
+    function drawInfo() {
+      ctx.fillStyle = "#000";
+      ctx.font = "14px monospace";
+      ctx.fillText(`점수: ${score} / 생명: ${lives} / 입력: ${inputBuffer}`, 10, 20);
+    }
+
+    function checkWordInput() {
+      const input = inputBuffer.trim();
+      const index = fallingWords.findIndex(fw => fw.word === input);
+      if (index !== -1) {
+        fallingWords.splice(index, 1);
+        score += 5;
+        inputBuffer = "";
+        playYammySound();  // 🔊 입력 성공 시 사운드 재생
+      }
+    }
+
+    function collisionDetection() {
+      const brickHeight = IMG_WIDTH * imgRatio;
+
+      for (let c = 0; c < colCount; c++) {
+        for (let r = 0; r < rowCount; r++) {
+          const b = bricks[c][r];
+          if (b.status === 1 && !b.broken) {
+            const bx = b.x;
+            const by = b.y;
+
+            const hitLeft = Math.abs(x - bx) <= radius && y > by && y < by + brickHeight;
+            const hitRight = Math.abs(x - (bx + IMG_WIDTH)) <= radius && y > by && y < by + brickHeight;
+            const hitTop = Math.abs(y - by) <= radius && x > bx && x < bx + IMG_WIDTH;
+            const hitBottom = Math.abs(y - (by + brickHeight)) <= radius && x > bx && x < bx + IMG_WIDTH;
+
+            if (hitLeft || hitRight || hitTop || hitBottom) {
+              if (hitLeft || hitRight) dx = -dx;
+              if (hitTop || hitBottom) dy = -dy;
+              b.broken = true;
+              b.status = 0;
+              b.visible = true;
+              b.brokenTime = Date.now();
+              fallingWords.push({ word: b.word, x: bx + 10, y: by });
+
+              if (b.word === "bombardino crocodilo") {
+                playBombardino();
+              }
+
+              playCrunchSound();
+            }
+          }
+        }
+      }
+    }
+
+    function applyAcceleration() {
+      const speed = Math.sqrt(dx * dx + dy * dy);
+      if (speed < MAX_SPEED) {
+        dx *= (1 + ACCEL);
+        dy *= (1 + ACCEL);
+      }
+    }
+
+    function checkWinCondition() {
+      if (gameCleared) return;
+      const allBricksBroken = bricks.flat().every(b => b.broken && !b.visible);
+      const allWordsCleared = fallingWords.length === 0;
+
+      if (allBricksBroken && allWordsCleared) {
+        gameCleared = true;
+        setTimeout(() => {
+          alert(`🎉 클리어! 점수: ${score}`);
+          location.reload();
+        }, 100);
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawBricks();
+      drawBall();
+      drawPaddle();
+      drawFallingWords();
+      drawInfo();
+      collisionDetection();
+      checkWinCondition();
+
+      if (x + dx > canvas.width - radius || x + dx < radius) dx = -dx;
+      if (y + dy < radius) dy = -dy;
+      else if (y + dy > canvas.height - radius) {
+        if (x > paddleX && x < paddleX + paddleWidth) {
+          dy = -dy;
+          applyAcceleration();
+        } else {
+          lives--;
+          playShoutSound();
+          if (!lives) {
+            setTimeout(() => {
+              alert("💥 게임 오버!");
+              location.reload();
+            }, 100);
+          } else {
+            x = canvas.width / 2;
+            y = canvas.height - 30;
+            dx = 1.5;
+            dy = -1.5;
+            paddleX = (canvas.width - paddleWidth) / 2;
+            inputBuffer = "";
+          }
+        }
+      }
+
+      if (rightPressed && paddleX < canvas.width - paddleWidth) paddleX += 5;
+      if (leftPressed && paddleX > 0) paddleX -= 5;
+
+      x += dx;
+      y += dy;
+
+      requestAnimationFrame(draw);
+    }
+  </script>
+</body>
+</html>
